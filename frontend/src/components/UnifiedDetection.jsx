@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { detectionAPI } from '../services/api';
+import { detectionAPI, sessionAPI } from '../services/api';
 import AiChatPanel from './AiChatPanel';
 
 const UnifiedDetection = ({ currentSession, onNewSession }) => {
@@ -22,6 +22,76 @@ const UnifiedDetection = ({ currentSession, onNewSession }) => {
       window.removeEventListener('drop', preventDefault);
     };
   }, []);
+
+  // Sync visual detection history with the currently selected session
+  useEffect(() => {
+    if (currentSession?.id) {
+      loadSessionHistory(currentSession.id);
+    } else {
+      handleNewAnalysis();
+      setAnalysisHistory([]);
+    }
+  }, [currentSession?.id]);
+
+  const loadSessionHistory = async (sessionId) => {
+    try {
+      setLoading(true);
+      const response = await sessionAPI.getSession(sessionId);
+      const detections = response.data.detections || [];
+      
+      const history = [];
+      let currentAnalysis = {};
+
+      detections.forEach((d) => {
+        if (d.detection_type === 'fish_detection') {
+          // If we already have a fish result pending without a disease match, push it and start fresh
+          if (currentAnalysis.fishResults) {
+            history.push({ ...currentAnalysis });
+            currentAnalysis = {};
+          }
+          currentAnalysis.id = d.id || Date.now();
+          currentAnalysis.preview = d.image_url;
+          currentAnalysis.fishImageUrl = d.image_url;
+          currentAnalysis.fishResults = d.results;
+          currentAnalysis.timestamp = d.created_at;
+        } else if (d.detection_type === 'disease_detection') {
+          // If this is an orphaned disease detection without a fish record, initialize the card
+          if (!currentAnalysis.preview) {
+             currentAnalysis.id = d.id || Date.now();
+             currentAnalysis.preview = d.image_url;
+             currentAnalysis.timestamp = d.created_at;
+          }
+          currentAnalysis.diseaseImageUrl = d.image_url;
+          currentAnalysis.diseaseResults = d.results;
+          
+          // Disease detection marks the completion of an analysis pipeline, push and reset
+          history.push({ ...currentAnalysis });
+          currentAnalysis = {};
+        }
+      });
+      
+      // Push any dangling half-finished analysis
+      if (Object.keys(currentAnalysis).length > 0) {
+        history.push({ ...currentAnalysis });
+      }
+      
+      setAnalysisHistory(history);
+      
+      if (history.length > 0) {
+         setFishResults(null);
+         setDiseaseResults(null);
+         setSelectedImage(null);
+         setPreview(null);
+         setCurrentStep('complete');
+      } else {
+         handleNewAnalysis();
+      }
+    } catch (err) {
+      console.error('Failed to load session history:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleImageSelect = (e) => {
     e.preventDefault();
@@ -80,28 +150,54 @@ const UnifiedDetection = ({ currentSession, onNewSession }) => {
       const fishResponse = await detectionAPI.detectFish(formData);
       const fishData = fishResponse.data.results;
       setFishResults(fishData);
-      setCurrentStep('disease');
 
-      // Step 2: Disease Detection
-      const formData2 = new FormData();
-      formData2.append('image', selectedImage);
-      formData2.append('sessionId', session.id);
-      const diseaseResponse = await detectionAPI.detectDisease(formData2);
-      const diseaseData = diseaseResponse.data.results;
+      let diseaseData = null;
+      let diseaseImgUrl = null;
+
+      // Check if a fish was actually detected
+      const detectedSpecies = fishData?.ensemble?.species || 'No detection';
+      
+      if (detectedSpecies === 'No detection' || detectedSpecies === 'No fish detected') {
+        // Step 2: Skip Disease Detection because there is no fish
+        diseaseData = {
+          disease: 'No Disease Detected',
+          confidence: 0,
+          description: 'Because no fish was detected in the image, disease analysis was skipped.',
+          severity: 'none',
+          recommendations: ['Please upload an image that clearly shows a fish.'],
+          additionalInfo: 'No fish detected in the frame.',
+          detections: [],
+          annotated_image: null
+        };
+      } else {
+        // Step 2: Actual Disease Detection
+        setCurrentStep('disease');
+        const formData2 = new FormData();
+        formData2.append('image', selectedImage);
+        formData2.append('sessionId', session.id);
+        const diseaseResponse = await detectionAPI.detectDisease(formData2);
+        diseaseData = diseaseResponse.data.results;
+        diseaseImgUrl = diseaseResponse.data.imageUrl;
+      }
+
       setDiseaseResults(diseaseData);
       setCurrentStep('complete');
 
-      // Add to analysis history
+      // Add to analysis history sequentially to render right away
       setAnalysisHistory(prev => [...prev, {
         id: Date.now(),
         preview: preview,
         fishResults: fishData,
         diseaseResults: diseaseData,
         fishImageUrl: fishResponse.data.imageUrl,
-        diseaseImageUrl: diseaseResponse.data.imageUrl,
+        diseaseImageUrl: diseaseImgUrl,
         timestamp: new Date().toISOString()
       }]);
 
+      setFishResults(null);
+      setDiseaseResults(null);
+      setPreview(null);
+      setSelectedImage(null);
     } catch (err) {
       setError(err.response?.data?.message || err.response?.data?.error || 'Detection failed. Please try again.');
       console.error('Detection error:', err);
@@ -112,10 +208,15 @@ const UnifiedDetection = ({ currentSession, onNewSession }) => {
   };
 
   const handleNewAnalysis = () => {
-    setSelectedImage(null);
-    setPreview(null);
-    setCurrentStep('upload');
-    setError('');
+    // If the session already has an analysis, "Analyze Another" should create a new distinct session
+    if (analysisHistory.length > 0) {
+      if (onNewSession) onNewSession();
+    } else {
+      setSelectedImage(null);
+      setPreview(null);
+      setCurrentStep('upload');
+      setError('');
+    }
   };
 
   const getSeverityStyle = (severity) => {

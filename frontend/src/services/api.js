@@ -1,4 +1,5 @@
 import axios from 'axios';
+import supabase from '../config/supabase';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -9,11 +10,21 @@ const api = axios.create({
     }
 });
 
-// Add auth token to requests
-api.interceptors.request.use((config) => {
-    const token = localStorage.getItem('access_token');
-    if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
+// Always fetch a fresh token from Supabase (fixes 400 errors from stale tokens)
+api.interceptors.request.use(async (config) => {
+    try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) {
+            config.headers.Authorization = `Bearer ${session.access_token}`;
+            // Also keep localStorage in sync
+            localStorage.setItem('access_token', session.access_token);
+        }
+    } catch (e) {
+        // fallback to localStorage if supabase unavailable
+        const token = localStorage.getItem('access_token');
+        if (token) {
+            config.headers.Authorization = `Bearer ${token}`;
+        }
     }
     return config;
 });
@@ -60,3 +71,4 @@ export const chatAPI = {
 };
 
 export default api;
+

@@ -12,32 +12,52 @@ const Dashboard = () => {
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // On mount: load all sessions, auto-select the most recent one (or leave blank)
   useEffect(() => {
-    loadSessions();
-  }, []);
+    if (user) {
+      initializeSession();
+    }
+  }, [user]);
 
-  const loadSessions = async () => {
+  const initializeSession = async () => {
     try {
       const response = await sessionAPI.getSessions();
-      setSessions(response.data.sessions || []);
+      const existingSessions = response.data.sessions || [];
+      setSessions(existingSessions);
+
+      if (existingSessions.length > 0) {
+        // Auto-restore the most recent session cleanly
+        setCurrentSession(existingSessions[0]);
+      } else {
+        // First-time user / no sessions: wait for them to start an analysis
+        setCurrentSession(null);
+      }
     } catch (error) {
-      console.error('Failed to load sessions:', error);
+      console.error('Failed to initialize session:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleNewSession = async () => {
+  const handleNewSessionClick = () => {
+    // Clear current session context so the UI shows the new upload screen.
+    // We DON'T hit the API to create an empty session yet.
+    setCurrentSession(null);
+  };
+
+  const handleCreateSession = async () => {
     try {
       const response = await sessionAPI.createSession({
-        title: `New Analysis ${new Date().toLocaleTimeString()}`,
+        title: `Analysis Session ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}`,
         type: 'fish_detection'
       });
       const newSession = response.data.session;
       setCurrentSession(newSession);
-      setSessions([newSession, ...sessions]);
+      setSessions(prev => [newSession, ...prev]);
+      return newSession;
     } catch (error) {
       console.error('Failed to create session:', error);
+      return null;
     }
   };
 
@@ -48,9 +68,14 @@ const Dashboard = () => {
   const handleDeleteSession = async (sessionId) => {
     try {
       await sessionAPI.deleteSession(sessionId);
-      setSessions(sessions.filter(s => s.id !== sessionId));
+      const remaining = sessions.filter(s => s.id !== sessionId);
+      setSessions(remaining);
       if (currentSession?.id === sessionId) {
-        setCurrentSession(null);
+        if (remaining.length > 0) {
+          setCurrentSession(remaining[0]);
+        } else {
+          setCurrentSession(null);
+        }
       }
     } catch (error) {
       console.error('Failed to delete session:', error);
@@ -74,7 +99,7 @@ const Dashboard = () => {
         currentSession={currentSession}
         onSelectSession={handleSelectSession}
         onDeleteSession={handleDeleteSession}
-        onNewSession={handleNewSession}
+        onNewSession={handleNewSessionClick}
         loading={loading}
       />
 
@@ -93,6 +118,12 @@ const Dashboard = () => {
               </div>
             </div>
             <div className="flex items-center space-x-4">
+              {currentSession && (
+                <div className="hidden md:block text-right">
+                  <p className="text-xs text-gray-400">Current session</p>
+                  <p className="text-sm font-medium text-gray-700 truncate max-w-xs">{currentSession.title}</p>
+                </div>
+              )}
               <div className="text-right">
                 <p className="text-sm font-medium text-gray-900">{user?.email}</p>
                 <p className="text-xs text-gray-500">{user?.user_metadata?.full_name || 'User'}</p>
@@ -109,7 +140,11 @@ const Dashboard = () => {
 
         {/* Detection Content */}
         <div className="flex-1 overflow-y-auto p-6">
-          <UnifiedDetection currentSession={currentSession} onNewSession={handleNewSession} />
+          <UnifiedDetection 
+            currentSession={currentSession} 
+            onNewSessionClick={handleNewSessionClick} 
+            onCreateSession={handleCreateSession} 
+          />
         </div>
       </div>
     </div>
@@ -117,3 +152,4 @@ const Dashboard = () => {
 };
 
 export default Dashboard;
+
