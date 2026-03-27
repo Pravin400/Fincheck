@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { detectionAPI, sessionAPI } from '../services/api';
 import AiChatPanel from './AiChatPanel';
 
-const UnifiedDetection = ({ currentSession, onNewSession }) => {
+const UnifiedDetection = ({ currentSession, onNewSessionClick, onCreateSession }) => {
   const [selectedImage, setSelectedImage] = useState(null);
   const [preview, setPreview] = useState(null);
   const [fishResults, setFishResults] = useState(null);
@@ -25,11 +25,13 @@ const UnifiedDetection = ({ currentSession, onNewSession }) => {
 
   // Sync visual detection history with the currently selected session
   useEffect(() => {
+    setAnalysisHistory([]); // Clear instantly to prevent bleeding visual states
+    setCurrentStep('upload'); 
+
     if (currentSession?.id) {
       loadSessionHistory(currentSession.id);
     } else {
       handleNewAnalysis();
-      setAnalysisHistory([]);
     }
   }, [currentSession?.id]);
 
@@ -133,8 +135,12 @@ const UnifiedDetection = ({ currentSession, onNewSession }) => {
 
     let session = currentSession;
     if (!session) {
-      await onNewSession();
-      return;
+      session = await onCreateSession();
+      if (!session) {
+        setLoading(false);
+        setError('Failed to initialize session automatically. Please try again.');
+        return;
+      }
     }
 
     setLoading(true);
@@ -208,15 +214,10 @@ const UnifiedDetection = ({ currentSession, onNewSession }) => {
   };
 
   const handleNewAnalysis = () => {
-    // If the session already has an analysis, "Analyze Another" should create a new distinct session
-    if (analysisHistory.length > 0) {
-      if (onNewSession) onNewSession();
-    } else {
-      setSelectedImage(null);
-      setPreview(null);
-      setCurrentStep('upload');
-      setError('');
-    }
+    setSelectedImage(null);
+    setPreview(null);
+    setCurrentStep('upload');
+    setError('');
   };
 
   const getSeverityStyle = (severity) => {
@@ -394,6 +395,8 @@ const UnifiedDetection = ({ currentSession, onNewSession }) => {
     );
   };
 
+  const latestAnalysis = analysisHistory.length > 0 ? analysisHistory[analysisHistory.length - 1] : null;
+
   return (
     <div className="max-w-5xl mx-auto">
       {/* Previous Analysis Reports */}
@@ -512,10 +515,11 @@ const UnifiedDetection = ({ currentSession, onNewSession }) => {
       {/* AI Chat Panel */}
       <AiChatPanel
         currentSession={currentSession}
-        fishResults={fishResults}
-        diseaseResults={diseaseResults}
+        fishResults={fishResults || latestAnalysis?.fishResults}
+        diseaseResults={diseaseResults || latestAnalysis?.diseaseResults}
         isAnalyzing={loading}
-        hasAnalysisResults={!!(fishResults || diseaseResults)}
+        hasAnalysisResults={!!(fishResults || diseaseResults || latestAnalysis)}
+        latestAnalysisTimestamp={latestAnalysis?.timestamp}
       />
     </div>
   );

@@ -39,10 +39,9 @@ const Dashboard = () => {
     }
   };
 
-  const handleNewSessionClick = () => {
-    // Clear current session context so the UI shows the new upload screen.
-    // We DON'T hit the API to create an empty session yet.
-    setCurrentSession(null);
+  const handleNewSessionClick = async () => {
+    // If they explicitly click "New Analysis" in the sidebar, visually give them a session right away
+    await handleCreateSession();
   };
 
   const handleCreateSession = async () => {

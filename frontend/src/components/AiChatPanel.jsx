@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { chatAPI } from '../services/api';
 
-const AiChatPanel = ({ currentSession, fishResults, diseaseResults, isAnalyzing, hasAnalysisResults }) => {
+const AiChatPanel = ({ currentSession, fishResults, diseaseResults, isAnalyzing, hasAnalysisResults, latestAnalysisTimestamp }) => {
   const [messages, setMessages] = useState([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -21,12 +21,12 @@ const AiChatPanel = ({ currentSession, fishResults, diseaseResults, isAnalyzing,
 
   // Load chat history when session changes
   useEffect(() => {
+    // Clear instantly to prevent bleeding visual states from the previous session
+    setMessages([]);
+    setHasSharedContext(false);
+
     if (currentSession?.id) {
       loadChatHistory();
-      setHasSharedContext(false);
-    } else {
-      setMessages([]);
-      setHasSharedContext(false);
     }
   }, [currentSession?.id]);
 
@@ -71,6 +71,7 @@ const AiChatPanel = ({ currentSession, fishResults, diseaseResults, isAnalyzing,
         detectionContext = {};
         if (fishResults) detectionContext.fishResults = fishResults;
         if (diseaseResults) detectionContext.diseaseResults = diseaseResults;
+        if (latestAnalysisTimestamp) detectionContext.timestamp = latestAnalysisTimestamp;
       }
 
       const response = await chatAPI.sendMessage({
@@ -187,6 +188,9 @@ const AiChatPanel = ({ currentSession, fishResults, diseaseResults, isAnalyzing,
     );
   }
 
+  const noFish = fishResults?.ensemble?.species === 'No fish detected' || fishResults?.ensemble?.species === 'No detection';
+  const chatDisabled = isLoading || isAnalyzing || !hasAnalysisResults || noFish;
+
   return (
     <div className="bg-white rounded-2xl shadow-lg border border-gray-200 mt-6 overflow-hidden flex flex-col" style={{ height: '500px' }}>
       {/* Chat Header */}
@@ -226,7 +230,11 @@ const AiChatPanel = ({ currentSession, fishResults, diseaseResults, isAnalyzing,
                 <li>Water quality & tank care</li>
                 <li>Feeding & nutrition tips</li>
               </ul>
-              {(fishResults || diseaseResults) ? (
+              {noFish ? (
+                <p className="text-sm text-red-600 font-medium mt-3">
+                  ⚠️ No fish detected in the image. AI Chat is disabled for this analysis.
+                </p>
+              ) : (fishResults || diseaseResults) ? (
                 <p className="text-sm text-emerald-600 font-medium mt-3">
                   📋 I can see your analysis results! Ask me anything about the findings.
                 </p>
@@ -319,17 +327,18 @@ const AiChatPanel = ({ currentSession, fishResults, diseaseResults, isAnalyzing,
               placeholder={
                 isAnalyzing ? "Wait for analysis to finish..." :
                 !hasAnalysisResults ? "Run analysis first to start chatting" :
+                noFish ? "AI Chat disabled: No fish detected." :
                 "Ask about fish diseases, treatment, species..."
               }
               rows={1}
               className="w-full px-4 py-3 bg-gray-100 rounded-xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all border border-transparent focus:border-emerald-300 disabled:opacity-60 disabled:bg-gray-200"
               style={{ maxHeight: '120px' }}
-              disabled={isLoading || isAnalyzing || !hasAnalysisResults}
+              disabled={chatDisabled}
             />
           </div>
           <button
             type="submit"
-            disabled={!inputMessage.trim() || isLoading || isAnalyzing || !hasAnalysisResults}
+            disabled={!inputMessage.trim() || chatDisabled}
             className="px-4 py-3 bg-gradient-to-r from-emerald-500 to-teal-500 text-white rounded-xl hover:from-emerald-600 hover:to-teal-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md flex-shrink-0"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

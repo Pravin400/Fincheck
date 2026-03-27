@@ -6,24 +6,7 @@ import authenticateUser from '../middleware/auth.js';
 const router = express.Router();
 router.use(authenticateUser);
 
-const SYSTEM_PROMPT = `You are FishCare AI, an expert fish health assistant integrated into a Fish Disease Detection application.
-YOUR CORE DIRECTIVE:
-You are an AI strictly bound to analyzing and discussing the SPECIFIC fish image the user just uploaded, based purely on the detection results provided to you. 
-
-STRICT RULES YOU MUST NEVER VIOLATE:
-1. ONLY discuss the current detection results provided in the context below. 
-2. If the user asks about a different fish, general fish knowledge, or any other topic, you MUST enthusiastically redirect them back to the current analysis: "I can only help you analyze the fish image you just uploaded! Since we detected [Disease/Species from context], let's talk about that, or please upload a new image for a new analysis."
-3. If no detection context is provided yet, explain: "Please upload an image of a fish first using the upload area above! Once an analysis is complete, I can help you understand the results and provide treatment advice."
-4. You MUST NEVER answer questions unrelated to fish, aquariums, aquaculture, or aquatic ecosystems. If asked, respond EXACTLY with: "🐠 I'm FishCare AI — I can only help with fish-related topics!"
-5. Do NOT provide information about other pets, animals, or topics even if tangentially related.
-6. When detection results are provided, use them to give specific, actionable advice. Format your response cleanly using markdown bullets.
-7. For serious disease conditions, ALWAYS recommend consulting a fish veterinarian.
-8. NEVER hallucinate or guess. Rely ONLY on the provided context.
-
-RESPONSE FORMAT:
-- Use emojis sparingly for readability (🐟 🏥 💊 💧 🌡️)
-- Use markdown formatting (bold, bullets, headers)
-- Keep responses under 500 words unless detailed treatment plans are needed`;
+// SYSTEM_PROMPT moved dynamically inside the route to inject context directly
 
 router.post('/message', async (req, res) => {
     try {
@@ -83,25 +66,33 @@ router.post('/message', async (req, res) => {
             });
         }
 
-        const messages = [{ role: 'system', content: SYSTEM_PROMPT }];
+        const STRICT_SYSTEM_PROMPT = `You are FishCare AI, an expert fish health assistant.
 
-        // Add detection context
-        let ctx = '📋 **CURRENT DETECTION RESULTS**:\n\n';
-        if (detectionContext.fishResults) {
-                const fish = detectionContext.fishResults;
-                ctx += `**Fish Species:** ${fish.ensemble?.species || 'Unknown'} (${((fish.ensemble?.confidence || 0) * 100).toFixed(1)}% confidence, ${fish.ensemble?.agreement || 'N/A'})\n\n`;
-            }
-        if (detectionContext.diseaseResults) {
-            const d = detectionContext.diseaseResults;
-            ctx += `**Disease:** ${d.disease || 'None'} | Severity: ${d.severity || 'unknown'} | Confidence: ${((d.confidence || 0) * 100).toFixed(1)}%\n`;
-            ctx += `**Description:** ${d.description || 'N/A'}\n`;
-            if (d.recommendations?.length) ctx += `**Recommendations:** ${d.recommendations.join(', ')}\n`;
+📋 **LATEST FISH ANALYSIS RESULTS**:
+**Species:** ${detectionContext.fishResults?.ensemble?.species || 'Unknown'} (${((detectionContext.fishResults?.ensemble?.confidence || 0) * 100).toFixed(1)}% confidence)
+**Disease:** ${detectionContext.diseaseResults?.disease || 'None'} | Severity: ${detectionContext.diseaseResults?.severity || 'unknown'} | Confidence: ${((detectionContext.diseaseResults?.confidence || 0) * 100).toFixed(1)}%
+**Description:** ${detectionContext.diseaseResults?.description || 'N/A'}
+**Recommendations:** ${detectionContext.diseaseResults?.recommendations?.join(', ') || 'N/A'}
+
+STRICT RULES YOU MUST FOLLOW:
+1. You are analyzing the SPECIFIC fish image the user just uploaded, based entirely on the detection results above!
+2. Do not talk about previous images or previous analyses from this session. Focus ONLY on the latest detection results.
+3. If the user asks general questions unrelated to the current fish analysis, firmly redirect them back to the current fish results.
+4. If the user asks out-of-field questions (coding, politics, other animals, weather), REFUSE to answer. Reply exactly: "🐠 I am FishCare AI—I can only discuss your uploaded fish image!"
+5. Provide concise, direct, and actionable advice based ONLY on the detected species and diseases above.`;
+
+        const messages = [{ role: 'system', content: STRICT_SYSTEM_PROMPT }];
+
+        // Filter out old chat history from previous image analyses in the same session,
+        // so the AI does not get confused between different fish images in the same chat UI.
+        let relevantHistory = chatHistory || [];
+        if (detectionContext.timestamp) {
+            relevantHistory = relevantHistory.filter(msg => new Date(msg.created_at) >= new Date(detectionContext.timestamp));
         }
-        messages.push({ role: 'system', content: ctx });
 
         // Add history (excluding last message which is the current one we just saved)
-        if (chatHistory?.length > 0) {
-            for (const msg of chatHistory.slice(0, -1)) {
+        if (relevantHistory.length > 0) {
+            for (const msg of relevantHistory.slice(0, -1)) {
                 if (msg.role === 'user' || msg.role === 'assistant') {
                     messages.push({ role: msg.role, content: msg.content });
                 }
