@@ -52,9 +52,13 @@ const UnifiedDetection = ({ currentSession, onNewSessionClick, onCreateSession }
             currentAnalysis = {};
           }
           currentAnalysis.id = d.id || Date.now();
-          currentAnalysis.preview = d.image_url;
+          // Use base64 from stored results first, then Supabase URL as fallback
+          const savedBase64 = d.results?.original_image_base64;
+          currentAnalysis.preview = savedBase64 || d.image_url;
           currentAnalysis.fishImageUrl = d.image_url;
-          currentAnalysis.fishResults = d.results;
+          // Strip the heavy base64 from results before storing in state (keep UI lean)
+          const { original_image_base64, ...cleanResults } = d.results || {};
+          currentAnalysis.fishResults = cleanResults;
           currentAnalysis.timestamp = d.created_at;
         } else if (d.detection_type === 'disease_detection') {
           // If this is an orphaned disease detection without a fish record, initialize the card
@@ -196,11 +200,11 @@ const UnifiedDetection = ({ currentSession, onNewSessionClick, onCreateSession }
       setDiseaseResults(diseaseData);
       setCurrentStep('complete');
 
-      // Add to analysis history — use Supabase URL first, base64 as fallback
+      // Add to analysis history — use backend base64 (also stored in DB) for reliability
+      const reliableImage = fishResponse.data.originalImageBase64 || imageDataUrl;
       setAnalysisHistory(prev => [...prev, {
         id: Date.now(),
-        preview: fishResponse.data.imageUrl || imageDataUrl,
-        localPreview: imageDataUrl,
+        preview: reliableImage,
         fishResults: fishData,
         diseaseResults: diseaseData,
         fishImageUrl: fishResponse.data.imageUrl,
