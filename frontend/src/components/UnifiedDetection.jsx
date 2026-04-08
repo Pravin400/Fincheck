@@ -147,6 +147,13 @@ const UnifiedDetection = ({ currentSession, onNewSessionClick, onCreateSession }
     setError('');
     setCurrentStep('fish');
 
+    // Convert image to persistent base64 data URL (survives state changes, unlike blob URLs)
+    const imageDataUrl = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.readAsDataURL(selectedImage);
+    });
+
     try {
       const formData = new FormData();
       formData.append('image', selectedImage);
@@ -189,10 +196,11 @@ const UnifiedDetection = ({ currentSession, onNewSessionClick, onCreateSession }
       setDiseaseResults(diseaseData);
       setCurrentStep('complete');
 
-      // Add to analysis history sequentially to render right away
+      // Add to analysis history — use Supabase URL first, base64 as fallback
       setAnalysisHistory(prev => [...prev, {
         id: Date.now(),
-        preview: preview,
+        preview: fishResponse.data.imageUrl || imageDataUrl,
+        localPreview: imageDataUrl,
         fishResults: fishData,
         diseaseResults: diseaseData,
         fishImageUrl: fishResponse.data.imageUrl,
@@ -235,7 +243,9 @@ const UnifiedDetection = ({ currentSession, onNewSessionClick, onCreateSession }
 
   // Render a single analysis report card
   const renderReportCard = (analysis, isLatest = false) => {
-    const { fishResults: fish, diseaseResults: disease, preview: imgPreview } = analysis;
+    const { fishResults: fish, diseaseResults: disease } = analysis;
+    // Fallback chain: preview (Supabase URL or base64) → localPreview → fishImageUrl
+    const displayImage = analysis.preview || analysis.localPreview || analysis.fishImageUrl;
     const severity = getSeverityStyle(disease?.severity);
 
     return (
@@ -267,7 +277,13 @@ const UnifiedDetection = ({ currentSession, onNewSessionClick, onCreateSession }
                 📷 Original Image
               </div>
               <div className="p-2 bg-gray-50">
-                <img src={imgPreview} alt="Original" className="w-full rounded-lg object-contain max-h-72" />
+                {displayImage ? (
+                  <img src={displayImage} alt="Original" className="w-full rounded-lg object-contain max-h-72" />
+                ) : (
+                  <div className="flex items-center justify-center h-72 text-gray-400">
+                    <p className="text-sm">Original image not available</p>
+                  </div>
+                )}
               </div>
             </div>
 

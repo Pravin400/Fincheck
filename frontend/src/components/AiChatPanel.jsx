@@ -51,6 +51,9 @@ const AiChatPanel = ({ currentSession, fishResults, diseaseResults, isAnalyzing,
     const trimmedMessage = inputMessage.trim();
     if (!trimmedMessage || isLoading || isAnalyzing || !currentSession?.id || !hasAnalysisResults) return;
 
+    const noFishCheck = fishResults?.ensemble?.species === 'No fish detected' || fishResults?.ensemble?.species === 'No detection';
+    if (noFishCheck) return;
+
     setError('');
     setInputMessage('');
 
@@ -61,38 +64,120 @@ const AiChatPanel = ({ currentSession, fishResults, diseaseResults, isAnalyzing,
       content: trimmedMessage,
       created_at: new Date().toISOString()
     };
-    setMessages(prev => [...prev, userMessage]);
+    const aiMessageId = `ai-${Date.now()}`;
+
+    setMessages(prev => [...prev, userMessage, {
+      id: aiMessageId,
+      role: 'assistant',
+      content: '',
+      created_at: new Date().toISOString(),
+      isStreaming: true
+    }]);
     setIsLoading(true);
 
     try {
-      // Build detection context if available
+      // Build detection context — strip heavy base64 fields
       let detectionContext = null;
       if (fishResults || diseaseResults) {
         detectionContext = {};
-        if (fishResults) detectionContext.fishResults = fishResults;
-        if (diseaseResults) detectionContext.diseaseResults = diseaseResults;
+        if (fishResults) {
+          const { annotated_image, detections, ...lightFish } = fishResults;
+          detectionContext.fishResults = lightFish;
+        }
+        if (diseaseResults) {
+          const { annotated_image, detections, ...lightDisease } = diseaseResults;
+          detectionContext.diseaseResults = lightDisease;
+        }
         if (latestAnalysisTimestamp) detectionContext.timestamp = latestAnalysisTimestamp;
       }
 
-      const response = await chatAPI.sendMessage({
-        sessionId: currentSession.id,
-        message: trimmedMessage,
-        detectionContext
+      // Get auth token
+      const { default: supabase } = await import('../config/supabase');
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || localStorage.getItem('access_token');
+
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
+      const response = await fetch(`${API_URL}/api/chat/message`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          sessionId: currentSession.id,
+          message: trimmedMessage,
+          detectionContext
+        })
       });
 
-      // Add AI response
-      const aiMessage = response.data.message;
-      setMessages(prev => [...prev, {
-        id: `ai-${Date.now()}`,
-        ...aiMessage
-      }]);
+      // Check if it's a streaming response (SSE)
+      const contentType = response.headers.get('content-type') || '';
+
+      if (contentType.includes('text/event-stream')) {
+        // Stream word-by-word
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data:')) continue;
+
+            const jsonStr = trimmed.slice(5).trim();
+            if (jsonStr === '[DONE]') continue;
+
+            try {
+              const event = JSON.parse(jsonStr);
+              if (event.error) {
+                setError(event.message || 'AI returned an error');
+                continue;
+              }
+              if (event.token) {
+                setMessages(prev => prev.map(m =>
+                  m.id === aiMessageId
+                    ? { ...m, content: m.content + event.token }
+                    : m
+                ));
+              }
+            } catch (e) {
+              // skip unparseable lines
+            }
+          }
+        }
+
+        // Mark streaming as complete
+        setMessages(prev => prev.map(m =>
+          m.id === aiMessageId ? { ...m, isStreaming: false } : m
+        ));
+
+      } else {
+        // Fallback: non-streaming JSON response
+        const data = await response.json();
+        if (data.error) {
+          throw new Error(data.message || data.error);
+        }
+        setMessages(prev => prev.map(m =>
+          m.id === aiMessageId
+            ? { ...m, content: data.message.content, isStreaming: false }
+            : m
+        ));
+      }
 
     } catch (err) {
-      const errorMsg = err.response?.data?.message || err.response?.data?.error || 'Failed to get response. Please try again.';
+      const errorMsg = err.message || 'Failed to get response. Please try again.';
       setError(errorMsg);
-      // Remove the temp user message on error
-      setMessages(prev => prev.filter(m => m.id !== userMessage.id));
-      setInputMessage(trimmedMessage); // restore the message
+      // Remove the empty AI placeholder message on error
+      setMessages(prev => prev.filter(m => m.id !== aiMessageId));
+      setInputMessage(trimmedMessage);
     } finally {
       setIsLoading(false);
       inputRef.current?.focus();
@@ -275,10 +360,12 @@ const AiChatPanel = ({ currentSession, fishResults, diseaseResults, isAnalyzing,
               {msg.role === 'user' ? (
                 <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
               ) : (
-                <div
-                  className="text-gray-700 chat-ai-content"
-                  dangerouslySetInnerHTML={{ __html: formatContent(msg.content) }}
-                />
+                <div className="text-gray-700 chat-ai-content">
+                  <span dangerouslySetInnerHTML={{ __html: formatContent(msg.content) }} />
+                  {msg.isStreaming && (
+                    <span className="inline-block w-2 h-4 bg-emerald-500 ml-0.5 animate-pulse rounded-sm" style={{ verticalAlign: 'text-bottom' }} />
+                  )}
+                </div>
               )}
               <p className={`text-xs mt-1 ${
                 msg.role === 'user' ? 'text-blue-100' : 'text-gray-400'
@@ -289,8 +376,8 @@ const AiChatPanel = ({ currentSession, fishResults, diseaseResults, isAnalyzing,
           </div>
         ))}
 
-        {/* Loading indicator */}
-        {isLoading && (
+        {/* Loading indicator — only show if no streaming message is visible yet */}
+        {isLoading && !messages.some(m => m.isStreaming) && (
           <div className="flex items-start space-x-3">
             <div className="w-8 h-8 bg-gradient-to-br from-emerald-500 to-teal-500 rounded-full flex items-center justify-center flex-shrink-0">
               <span className="text-sm">🐠</span>

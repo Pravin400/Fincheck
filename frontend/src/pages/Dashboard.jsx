@@ -105,31 +105,31 @@ const Dashboard = () => {
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-4">
+        <header className="bg-white border-b border-gray-200 px-4 md:px-6 py-3 md:py-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-lg flex items-center justify-center">
-                <span className="text-white text-xl">🐠</span>
+            <div className="flex items-center space-x-3 md:space-x-4 ml-10 md:ml-0">
+              <div className="w-8 h-8 md:w-10 md:h-10 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-lg flex items-center justify-center">
+                <span className="text-white text-lg md:text-xl">🐠</span>
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-gray-900">FishCare AI</h1>
-                <p className="text-sm text-gray-500">AI-Powered Fish Analysis & Disease Detection</p>
+                <h1 className="text-lg md:text-2xl font-bold text-gray-900">FishCare AI</h1>
+                <p className="text-xs md:text-sm text-gray-500 hidden sm:block">AI-Powered Fish Analysis & Disease Detection</p>
               </div>
             </div>
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-2 md:space-x-4">
               {currentSession && (
-                <div className="hidden md:block text-right">
+                <div className="hidden lg:block text-right">
                   <p className="text-xs text-gray-400">Current session</p>
                   <p className="text-sm font-medium text-gray-700 truncate max-w-xs">{currentSession.title}</p>
                 </div>
               )}
-              <div className="text-right">
+              <div className="text-right hidden sm:block">
                 <p className="text-sm font-medium text-gray-900">{user?.email}</p>
                 <p className="text-xs text-gray-500">{user?.user_metadata?.full_name || 'User'}</p>
               </div>
               <button
                 onClick={handleLogout}
-                className="px-4 py-2 text-gray-700 hover:text-red-600 font-medium transition-colors"
+                className="px-3 py-1.5 md:px-4 md:py-2 text-gray-700 hover:text-red-600 font-medium transition-colors text-sm"
               >
                 Logout
               </button>
@@ -138,7 +138,7 @@ const Dashboard = () => {
         </header>
 
         {/* Detection Content */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-3 md:p-6">
           <UnifiedDetection 
             currentSession={currentSession} 
             onNewSessionClick={handleNewSessionClick} 

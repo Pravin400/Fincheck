@@ -1,12 +1,11 @@
 import express from 'express';
-import OpenAI from 'openai';
 import supabase from '../config/supabase.js';
 import authenticateUser from '../middleware/auth.js';
 
 const router = express.Router();
 router.use(authenticateUser);
 
-// SYSTEM_PROMPT moved dynamically inside the route to inject context directly
+const COHERE_BASE_URL = 'https://api.cohere.com/v2/chat';
 
 router.post('/message', async (req, res) => {
     try {
@@ -20,15 +19,13 @@ router.post('/message', async (req, res) => {
             return res.status(400).json({ error: 'Session ID is required' });
         }
 
-        const apiKey = process.env.OPENAI_API_KEY;
-        if (!apiKey || apiKey === 'your_openai_api_key_here') {
+        const apiKey = process.env.COHERE_API_KEY;
+        if (!apiKey) {
             return res.status(503).json({
-                error: 'OpenAI API key not configured',
-                message: 'Please add your OpenAI API key to the backend .env file'
+                error: 'AI API key not configured',
+                message: 'Please add your COHERE_API_KEY to the backend .env file'
             });
         }
-
-        const openai = new OpenAI({ apiKey });
 
         // Save user message
         await supabase.from('chat_messages').insert([{
@@ -42,13 +39,13 @@ router.post('/message', async (req, res) => {
         // Load chat history
         const { data: chatHistory } = await supabase
             .from('chat_messages')
-            .select('role, content')
+            .select('role, content, created_at')
             .eq('session_id', sessionId)
             .eq('user_id', userId)
             .order('created_at', { ascending: true })
             .limit(20);
 
-        // Add detection context check
+        // If no detection context, return a canned response
         if (!detectionContext || (!detectionContext.fishResults && !detectionContext.diseaseResults)) {
             const aiResponse = "🐠 Please run an analysis on your uploaded fish image first! I can only provide insights based on specific detection results.";
             
@@ -66,6 +63,7 @@ router.post('/message', async (req, res) => {
             });
         }
 
+        // Build strict system prompt
         const STRICT_SYSTEM_PROMPT = `You are FishCare AI, an expert fish health assistant.
 
 📋 **LATEST FISH ANALYSIS RESULTS**:
@@ -79,18 +77,18 @@ STRICT RULES YOU MUST FOLLOW:
 2. Do not talk about previous images or previous analyses from this session. Focus ONLY on the latest detection results.
 3. If the user asks general questions unrelated to the current fish analysis, firmly redirect them back to the current fish results.
 4. If the user asks out-of-field questions (coding, politics, other animals, weather), REFUSE to answer. Reply exactly: "🐠 I am FishCare AI—I can only discuss your uploaded fish image!"
-5. Provide concise, direct, and actionable advice based ONLY on the detected species and diseases above.`;
+5. Provide concise, direct, and actionable advice based ONLY on the detected species and diseases above.
+6. Use emojis sparingly for readability (🐟 🏥 💊 💧 🌡️). Use markdown formatting. Keep responses under 500 words.
+7. For serious disease conditions, ALWAYS recommend consulting a fish veterinarian.`;
 
         const messages = [{ role: 'system', content: STRICT_SYSTEM_PROMPT }];
 
-        // Filter out old chat history from previous image analyses in the same session,
-        // so the AI does not get confused between different fish images in the same chat UI.
+        // Filter history to only include messages from the latest analysis
         let relevantHistory = chatHistory || [];
         if (detectionContext.timestamp) {
             relevantHistory = relevantHistory.filter(msg => new Date(msg.created_at) >= new Date(detectionContext.timestamp));
         }
 
-        // Add history (excluding last message which is the current one we just saved)
         if (relevantHistory.length > 0) {
             for (const msg of relevantHistory.slice(0, -1)) {
                 if (msg.role === 'user' || msg.role === 'assistant') {
@@ -101,33 +99,102 @@ STRICT RULES YOU MUST FOLLOW:
 
         messages.push({ role: 'user', content: message.trim() });
 
-        const completion = await openai.chat.completions.create({
-            model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-            messages,
-            max_tokens: 1000,
-            temperature: 0.7,
+        // --- SSE Streaming Response ---
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.flushHeaders();
+
+        const cohereResponse = await fetch(COHERE_BASE_URL, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify({
+                model: process.env.COHERE_MODEL || 'command-a-03-2025',
+                messages,
+                max_tokens: 1000,
+                temperature: 0.7,
+                stream: true,
+            })
         });
 
-        const aiResponse = completion.choices[0]?.message?.content || 'Sorry, I could not generate a response.';
+        if (!cohereResponse.ok) {
+            const errorData = await cohereResponse.json().catch(() => ({}));
+            console.error('Cohere API error:', cohereResponse.status, JSON.stringify(errorData));
+            res.write(`data: ${JSON.stringify({ error: true, message: errorData?.message || 'AI service error' })}\n\n`);
+            res.write('data: [DONE]\n\n');
+            return res.end();
+        }
 
+        let fullResponse = '';
+        const reader = cohereResponse.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed || !trimmed.startsWith('data:')) continue;
+
+                const jsonStr = trimmed.slice(5).trim();
+                if (jsonStr === '[DONE]') continue;
+
+                try {
+                    const event = JSON.parse(jsonStr);
+
+                    // Cohere v2 streaming: content-delta events
+                    if (event.type === 'content-delta') {
+                        const text = event.delta?.message?.content?.text || '';
+                        if (text) {
+                            fullResponse += text;
+                            res.write(`data: ${JSON.stringify({ token: text })}\n\n`);
+                        }
+                    }
+                } catch (e) {
+                    // skip unparseable lines
+                }
+            }
+        }
+
+        // If streaming produced nothing, fallback
+        if (!fullResponse) {
+            fullResponse = 'Sorry, I could not generate a response. Please try again.';
+            res.write(`data: ${JSON.stringify({ token: fullResponse })}\n\n`);
+        }
+
+        // Signal completion
+        res.write('data: [DONE]\n\n');
+        res.end();
+
+        // Save the full AI response to the database
         await supabase.from('chat_messages').insert([{
             session_id: sessionId,
             user_id: userId,
             role: 'assistant',
-            content: aiResponse,
+            content: fullResponse,
             created_at: new Date().toISOString()
         }]);
 
-        res.json({
-            success: true,
-            message: { role: 'assistant', content: aiResponse, created_at: new Date().toISOString() }
-        });
-
     } catch (error) {
         console.error('Chat error:', error);
-        if (error?.status === 401) return res.status(401).json({ error: 'Invalid OpenAI API key' });
-        if (error?.status === 429) return res.status(429).json({ error: 'Rate limit exceeded. Please wait.' });
-        res.status(500).json({ error: 'Chat failed', message: error.message });
+        if (!res.headersSent) {
+            res.status(500).json({ error: 'Chat failed', message: error.message });
+        } else {
+            res.write(`data: ${JSON.stringify({ error: true, message: error.message })}\n\n`);
+            res.write('data: [DONE]\n\n');
+            res.end();
+        }
     }
 });
 

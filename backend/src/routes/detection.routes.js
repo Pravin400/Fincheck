@@ -26,6 +26,23 @@ const upload = multer({
 // All routes require authentication
 router.use(authenticateUser);
 
+// Ensure storage bucket exists on first use
+let bucketChecked = false;
+async function ensureBucket() {
+    if (bucketChecked) return;
+    try {
+        const { data: buckets } = await supabase.storage.listBuckets();
+        const exists = buckets?.some(b => b.id === 'fish-images');
+        if (!exists) {
+            await supabase.storage.createBucket('fish-images', { public: true });
+            console.log('✅ Created fish-images storage bucket');
+        }
+        bucketChecked = true;
+    } catch (err) {
+        console.error('Bucket check error:', err.message);
+    }
+}
+
 // Fish detection endpoint
 router.post('/fish', upload.single('image'), async (req, res) => {
     try {
@@ -50,11 +67,16 @@ router.post('/fish', upload.single('image'), async (req, res) => {
             }
         );
 
-        // Upload image to Supabase Storage  
-        const fileExt = path.extname(req.file.originalname);
+        // Create base64 of the original image (reliable fallback)
+        const originalImageBase64 = `data:${req.file.mimetype};base64,${fileBuffer.toString('base64')}`;
+
+        // Try uploading to Supabase Storage
+        await ensureBucket();
+        const fileExt = path.extname(req.file.originalname) || '.jpg';
         const fileName = `${uuidv4()}${fileExt}`;
         const filePath = `detections/${req.user.id}/${fileName}`;
 
+        let publicUrl = null;
         const { error: uploadError } = await supabase.storage
             .from('fish-images')
             .upload(filePath, fileBuffer, {
@@ -62,27 +84,33 @@ router.post('/fish', upload.single('image'), async (req, res) => {
                 upsert: false
             });
 
-        if (uploadError) {
-            console.error('Upload error:', uploadError);
+        if (!uploadError) {
+            const { data } = supabase.storage
+                .from('fish-images')
+                .getPublicUrl(filePath);
+            publicUrl = data.publicUrl;
+        } else {
+            console.error('Upload error (using base64 fallback):', uploadError.message);
         }
 
-        const { data: { publicUrl } } = supabase.storage
-            .from('fish-images')
-            .getPublicUrl(filePath);
-
-        // Save detection to database
+        // Save detection to database — include original image base64 in results for persistence
         if (sessionId) {
+            const resultsWithImage = {
+                ...mlResponse.data,
+                original_image_base64: originalImageBase64
+            };
+
             const { error: dbError } = await supabase
                 .from('detections')
                 .insert([{
                     session_id: sessionId,
                     user_id: req.user.id,
                     detection_type: 'fish_detection',
-                    image_url: publicUrl,
-                    results: mlResponse.data,
+                    image_url: publicUrl || 'base64_stored',
+                    results: resultsWithImage,
                     created_at: new Date().toISOString()
                 }]);
-            if (dbError) console.error('Database error:', dbError);
+            if (dbError) console.error('Database error:', dbError.message);
         }
 
         fs.unlinkSync(req.file.path);
@@ -90,7 +118,8 @@ router.post('/fish', upload.single('image'), async (req, res) => {
         res.json({
             success: true,
             results: mlResponse.data,
-            imageUrl: publicUrl
+            imageUrl: publicUrl,
+            originalImageBase64
         });
     } catch (error) {
         console.error('Fish detection error:', error);
@@ -122,10 +151,13 @@ router.post('/disease', upload.single('image'), async (req, res) => {
             }
         );
 
-        const fileExt = path.extname(req.file.originalname);
+        // Try uploading to Supabase Storage
+        await ensureBucket();
+        const fileExt = path.extname(req.file.originalname) || '.jpg';
         const fileName = `${uuidv4()}${fileExt}`;
         const filePath = `detections/${req.user.id}/${fileName}`;
 
+        let publicUrl = null;
         const { error: uploadError } = await supabase.storage
             .from('fish-images')
             .upload(filePath, fileBuffer, {
@@ -133,11 +165,14 @@ router.post('/disease', upload.single('image'), async (req, res) => {
                 upsert: false
             });
 
-        if (uploadError) console.error('Upload error:', uploadError);
-
-        const { data: { publicUrl } } = supabase.storage
-            .from('fish-images')
-            .getPublicUrl(filePath);
+        if (!uploadError) {
+            const { data } = supabase.storage
+                .from('fish-images')
+                .getPublicUrl(filePath);
+            publicUrl = data.publicUrl;
+        } else {
+            console.error('Upload error (disease):', uploadError.message);
+        }
 
         if (sessionId) {
             const { error: dbError } = await supabase
@@ -146,11 +181,11 @@ router.post('/disease', upload.single('image'), async (req, res) => {
                     session_id: sessionId,
                     user_id: req.user.id,
                     detection_type: 'disease_detection',
-                    image_url: publicUrl,
+                    image_url: publicUrl || 'base64_stored',
                     results: mlResponse.data,
                     created_at: new Date().toISOString()
                 }]);
-            if (dbError) console.error('Database error:', dbError);
+            if (dbError) console.error('Database error:', dbError.message);
         }
 
         fs.unlinkSync(req.file.path);
