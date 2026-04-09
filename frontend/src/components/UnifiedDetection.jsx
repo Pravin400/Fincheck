@@ -282,7 +282,16 @@ const UnifiedDetection = ({ currentSession, onNewSessionClick, onCreateSession }
               </div>
               <div className="p-2 bg-gray-50">
                 {displayImage ? (
-                  <img src={displayImage} alt="Original" className="w-full rounded-lg object-contain max-h-72" />
+                  <img
+                    src={displayImage}
+                    alt="Original"
+                    className="w-full rounded-lg object-contain max-h-72"
+                    onError={(e) => {
+                      // If the URL fails to load, replace with placeholder
+                      e.target.style.display = 'none';
+                      e.target.parentElement.innerHTML = '<div class="flex items-center justify-center h-72 text-gray-400"><p class="text-sm">⚠️ Original image unavailable — restart backend to enable image storage</p></div>';
+                    }}
+                  />
                 ) : (
                   <div className="flex items-center justify-center h-72 text-gray-400">
                     <p className="text-sm">Original image not available</p>
