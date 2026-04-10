@@ -109,7 +109,7 @@ const Dashboard = () => {
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3 md:space-x-4 ml-10 md:ml-0">
               <div className="w-8 h-8 md:w-10 md:h-10 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-lg flex items-center justify-center">
-                <span className="text-white text-lg md:text-xl">🐠</span>
+                <span className="text-white text-lg md:text-xl"><img src="fevicon2.jpg" alt="" className='h-10 w-20'/></span>
               </div>
               <div>
                 <h1 className="text-lg md:text-2xl font-bold text-gray-900">FishCare AI</h1>

@@ -13,7 +13,7 @@ const LandingPage = () => {
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center space-x-2">
               <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-lg flex items-center justify-center">
-                <span className="text-white text-xl font-bold">🐠</span>
+                <span className="text-white text-xl font-bold"><img src="fevicon2.jpg" alt="" className='h-10 w-25'/></span>
               </div>
               <span className="text-xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
                 FishCare AI
@@ -58,7 +58,7 @@ const LandingPage = () => {
             </span>
           </h1>
           <p className="text-xl text-gray-600 mb-12 max-w-3xl mx-auto">
-            Advanced ensemble learning with 4 specialized models for accurate fish species identification
+            Advanced ensemble learning with specialized models for accurate fish species identification
             and disease detection. Protect your aquatic ecosystem with cutting-edge AI technology.
           </p>
           <div className="flex justify-center space-x-4">
@@ -87,7 +87,7 @@ const LandingPage = () => {
             </div>
             <h3 className="text-2xl font-bold text-gray-900 mb-4">Ensemble Detection</h3>
             <p className="text-gray-600">
-              4 specialized AI models work together to provide highly accurate fish species identification
+              Specialized AI models work together to provide highly accurate fish species identification
               with confidence scoring and validation.
             </p>
           </div>
