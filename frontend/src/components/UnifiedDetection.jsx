@@ -354,7 +354,7 @@ const UnifiedDetection = ({ currentSession, onNewSessionClick, onCreateSession }
           {/* Stage 2: Disease Detection */}
           <div className={`${severity.bg} rounded-xl p-5 border ${severity.border} mb-4`}>
             <div className="flex items-center mb-3">
-              <span className="text-xl mr-2">🏥</span>
+              <span className="text-xl mr-2"></span>
               <h4 className="text-base font-bold text-gray-900">Stage 2 — Disease Detection & Health Assessment</h4>
             </div>
             <div className="bg-white rounded-lg p-4 shadow-sm">
